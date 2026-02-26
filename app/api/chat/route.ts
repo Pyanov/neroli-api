@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { after } from "next/server";
 import { streamText } from "ai";
 import { z } from "zod";
 import { authenticateRequest } from "@/lib/auth/middleware";
@@ -75,25 +76,31 @@ export async function POST(request: NextRequest) {
     model: companionModel,
     system: systemPrompt,
     messages: aiMessages,
-    onFinish: async ({ text }) => {
-      // Save assistant message
-      await createMessage({ conversationId: conversationId!, role: "assistant", content: text });
+  });
 
-      // Update conversation title from first message
-      const conv = await getConversation(conversationId!, auth.userId);
-      if (conv && !conv.title) {
-        const title = message.length > 50 ? message.slice(0, 50) + "..." : message;
-        await db
-          .update(conversations)
-          .set({ title, updatedAt: new Date() })
-          .where(eq(conversations.id, conversationId!));
-      } else {
-        await db
-          .update(conversations)
-          .set({ updatedAt: new Date() })
-          .where(eq(conversations.id, conversationId!));
-      }
-    },
+  // Use Next.js after() to persist the assistant message after response streams
+  // This keeps the serverless function alive to complete DB writes
+  const convId = conversationId;
+  after(async () => {
+    const fullText = await result.text;
+    if (fullText) {
+      await createMessage({ conversationId: convId, role: "assistant", content: fullText });
+    }
+
+    // Update conversation title from first user message
+    const conv = await getConversation(convId, auth.userId);
+    if (conv && !conv.title) {
+      const title = message.length > 50 ? message.slice(0, 50) + "..." : message;
+      await db
+        .update(conversations)
+        .set({ title, updatedAt: new Date() })
+        .where(eq(conversations.id, convId));
+    } else if (conv) {
+      await db
+        .update(conversations)
+        .set({ updatedAt: new Date() })
+        .where(eq(conversations.id, convId));
+    }
   });
 
   return result.toTextStreamResponse({
