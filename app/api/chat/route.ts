@@ -4,10 +4,10 @@ import { streamText } from "ai";
 import { z } from "zod";
 import { authenticateRequest } from "@/lib/auth/middleware";
 import { companionModel } from "@/lib/ai/providers";
-import { buildSystemPrompt } from "@/lib/ai/prompts";
+import { buildSystemPromptWithMemory } from "@/lib/ai/prompts";
+import { assembleMemoryContext, formatMemoryForPrompt } from "@/lib/ai/memory";
 import { chatRateLimit } from "@/lib/rate-limit";
 import {
-  getActiveInsights,
   getMessages,
   createMessage,
   createConversation,
@@ -55,14 +55,16 @@ export async function POST(request: NextRequest) {
   // Save user message
   await createMessage({ conversationId, role: "user", content: message });
 
-  // Build context
-  const [insightRows, history] = await Promise.all([
-    getActiveInsights(auth.userId),
+  // Build context — assemble full memory and message history in parallel
+  const [memory, history] = await Promise.all([
+    assembleMemoryContext(auth.userId, conversationId),
     getMessages(conversationId),
   ]);
 
-  const insightStrings = insightRows.map((i) => `[${i.type}] ${i.content}`);
-  const systemPrompt = buildSystemPrompt(insightStrings);
+  // Detect first message: history has only the user message we just saved
+  const isFirstMessage = history.length <= 1;
+  const formattedMemory = formatMemoryForPrompt(memory, { isFirstMessage });
+  const systemPrompt = buildSystemPromptWithMemory(formattedMemory);
 
   // Format history for AI SDK
   const aiMessages = history.map((m) => ({
