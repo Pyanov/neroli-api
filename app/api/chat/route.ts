@@ -96,7 +96,7 @@ export async function POST(request: NextRequest) {
     },
   });
 
-  return result.toDataStreamResponse({
+  return result.toTextStreamResponse({
     headers: {
       "X-Conversation-Id": conversationId,
     },
